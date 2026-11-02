@@ -67,34 +67,51 @@ def extract_epub(path):
             name = posixpath.normpath(posixpath.join(posixpath.dirname(opf_path), href.split("#")[0]))
             if name not in z.namelist(): continue
             raw = z.read(name).decode("utf-8", errors="replace")
-            try:
-                tree = ET.fromstring(raw)
-            except ET.ParseError:
-                tree = None
-            chapter_nodes = []
-            if tree is not None:
-                for node in tree.iter():
-                    if node.tag.rsplit("}", 1)[-1] == "div" and "chapter" in node.attrib.get("class", "").split():
-                        chapter_nodes.append(node)
-            if chapter_nodes:
-                for node in chapter_nodes:
-                    heading = ""
-                    for child in node.iter():
-                        if child.tag.rsplit("}", 1)[-1] == "p" and "cn" in child.attrib.get("class", "").split():
-                            heading = " ".join("".join(child.itertext()).split())
-                            break
-                    if not heading:
-                        for child in node.iter():
-                            if child.tag.rsplit("}", 1)[-1] in ("h1", "h2"):
-                                heading = " ".join("".join(child.itertext()).split())
-                                break
-                    if not heading:
-                        heading = f"Chapter {len(chapters)+1}"
-                    parser = TextHTML()
-                    parser.feed(ET.tostring(node, encoding="unicode", method="html"))
-                    content = parser.get_text()
-                    if len(content.strip()) >= 30:
-                        chapters.append((heading[:90], content))
+            # EPUB XHTML is often not strict XML. Parse chapter containers as HTML.
+            class ChapterParser(HTMLParser):
+                def __init__(self):
+                    super().__init__()
+                    self.depth = 0
+                    self.active = False
+                    self.heading = False
+                    self.heading_words = []
+                    self.words = []
+                    self.found = []
+                def handle_starttag(self, tag, attrs):
+                    attrs = dict(attrs)
+                    if tag == "div":
+                        if self.active:
+                            self.depth += 1
+                        elif "chapter" in attrs.get("class", "").split():
+                            self.active = True
+                            self.depth = 1
+                            self.words = []
+                            self.heading_words = []
+                    if self.active:
+                        if tag == "p" and "cn" in attrs.get("class", "").split():
+                            self.heading = True
+                        if tag in ("p", "div", "br", "li", "h1", "h2"):
+                            self.words.append("\\n")
+                def handle_data(self, data):
+                    if self.active:
+                        self.words.append(data)
+                        if self.heading: self.heading_words.append(data)
+                def handle_endtag(self, tag):
+                    if not self.active: return
+                    if tag == "p" and self.heading: self.heading = False
+                    if tag == "div":
+                        self.depth -= 1
+                        if self.depth == 0:
+                            title = " ".join("".join(self.heading_words).split())
+                            content = "".join(self.words).strip()
+                            if len(content) >= 30:
+                                self.found.append((title, content))
+                            self.active = False
+            parser = ChapterParser()
+            parser.feed(raw)
+            if parser.found:
+                for title, content in parser.found:
+                    chapters.append((title[:90] if title else f"Chapter {len(chapters)+1}", content))
             else:
                 parser = TextHTML()
                 parser.feed(raw)
