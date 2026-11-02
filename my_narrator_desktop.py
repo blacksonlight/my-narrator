@@ -380,18 +380,26 @@ class App:
         window_id = canvas.create_window((0, 0), window=frame, anchor="nw")
         frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>", lambda e: canvas.itemconfigure(window_id, width=e.width))
+        # macOS sends small, sometimes fractional MouseWheel deltas from trackpads.
+        # Accumulate them instead of rounding each gesture down to zero.
+        self._wheel_remainder = 0.0
         def wheel(event):
-            # macOS trackpad gestures: keep smooth proportional scrolling.
             widget = event.widget
+            # Keep scrolling the chapter tree when the pointer is inside it.
             if widget is self.sections or widget is self.log_box:
                 return
-            delta = getattr(event, "delta", 0)
-            if delta:
-                canvas.yview_scroll(-int(delta), "units")
-        root.bind_all("<MouseWheel>", wheel, add="+")
-        root.bind_all("<Shift-MouseWheel>", wheel, add="+")
-        root.bind_all("<Button-4>", lambda e: canvas.yview_scroll(-3, "units"), add="+")
-        root.bind_all("<Button-5>", lambda e: canvas.yview_scroll(3, "units"), add="+")
+            delta = float(getattr(event, "delta", 0))
+            if not delta:
+                return
+            self._wheel_remainder += delta
+            steps = int(self._wheel_remainder)
+            if steps:
+                canvas.yview_scroll(-steps, "units")
+                self._wheel_remainder -= steps
+            return "break"
+        root.bind_all("<MouseWheel>", wheel)
+        root.bind_all("<Button-4>", lambda e: canvas.yview_scroll(-3, "units"))
+        root.bind_all("<Button-5>", lambda e: canvas.yview_scroll(3, "units"))
         ttk.Label(frame, text="My Narrator", font=("Helvetica", 24, "bold")).pack(anchor="w")
         ttk.Label(frame, text="Generate locally. AirDrop or iCloud to iPhone.").pack(anchor="w", pady=(0, 15))
         ttk.Label(frame, text="PDF or DRM-free EPUB").pack(anchor="w")
