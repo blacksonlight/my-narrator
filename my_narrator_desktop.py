@@ -353,8 +353,8 @@ class App:
     def __init__(self, root):
         self.root = root
         root.title("My Narrator — Audiobook Studio")
-        root.geometry("740x680")
-        root.minsize(620, 570)
+        root.geometry("800x700")
+        root.minsize(620, 480)
         self.book = tk.StringVar()
         self.output = tk.StringVar(value=str(Path.home() / "Music" / "My Narrator"))
         self.voice = tk.StringVar(value="Michael — American male")
@@ -368,16 +368,17 @@ class App:
         self.preview_path = None
         # Scroll the entire studio so playback and conversion controls remain reachable.
         outer = ttk.Frame(root)
-        outer.pack(fill="both", expand=True)
-        canvas = tk.Canvas(outer, highlightthickness=0, borderwidth=0)
+        outer.pack(side="top", fill="both", expand=True)
+        canvas = tk.Canvas(outer, highlightthickness=0, borderwidth=0, yscrollincrement=24)
         page_scroll = tk.Scrollbar(outer, orient="vertical", command=canvas.yview, width=20,
-                                   relief="raised", bg="#8498b5", troughcolor="#e4e9f0",\n                                   activebackground="#54739e")
+                                   relief="raised", bg="#8498b5", troughcolor="#e4e9f0",
+                                   activebackground="#54739e")
         canvas.configure(yscrollcommand=page_scroll.set)
         page_scroll.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
         # Explicit navigation buttons remain visible even with macOS auto-hidden scrollbars.
         scroll_controls = ttk.Frame(root)
-        scroll_controls.pack(side="bottom", fill="x")
+        scroll_controls.pack(side="bottom", fill="x", before=outer)
         ttk.Button(scroll_controls, text="▲ Scroll up", command=lambda: canvas.yview_scroll(-5, "units")).pack(side="left", padx=8, pady=3)
         ttk.Button(scroll_controls, text="▼ Scroll down", command=lambda: canvas.yview_scroll(5, "units")).pack(side="right", padx=8, pady=3)
         frame = ttk.Frame(canvas, padding=20)
@@ -393,6 +394,7 @@ class App:
             if delta:
                 canvas.yview_scroll(-int(delta / abs(delta)), "units")
         root.bind_all("<MouseWheel>", wheel, add="+")
+        root.bind_all("<Shift-MouseWheel>", wheel, add="+")
         root.bind_all("<Button-4>", lambda e: canvas.yview_scroll(-3, "units"), add="+")
         root.bind_all("<Button-5>", lambda e: canvas.yview_scroll(3, "units"), add="+")
         ttk.Label(frame, text="My Narrator", font=("Helvetica", 24, "bold")).pack(anchor="w")
@@ -405,7 +407,7 @@ class App:
         ttk.Label(frame, text="Browse books and chapters (Cmd-click to select multiple chapters)").pack(anchor="w")
         section_frame = ttk.Frame(frame)
         section_frame.pack(fill="both", expand=True, pady=(3, 4))
-        self.sections = ttk.Treeview(section_frame, show="tree", selectmode="extended", height=9)
+        self.sections = ttk.Treeview(section_frame, show="tree", selectmode="extended", height=6)
         scrollbar = ttk.Scrollbar(section_frame, orient="vertical", command=self.sections.yview)
         self.sections.configure(yscrollcommand=scrollbar.set)
         self.sections.pack(side="left", fill="both", expand=True)
@@ -436,7 +438,7 @@ class App:
         self.button.pack(fill="x", pady=(4, 5))
         self.cancel_button = ttk.Button(frame, text="Cancel Conversion", command=self.cancel, state="disabled")
         self.cancel_button.pack(fill="x", pady=(0, 10))
-        self.log_box = tk.Text(frame, height=9, wrap="word", state="disabled")
+        self.log_box = tk.Text(frame, height=5, wrap="word", state="disabled")
         self.log_box.pack(fill="both", expand=True)
         root.protocol("WM_DELETE_WINDOW", self.close)
         root.after(100, self.drain)
