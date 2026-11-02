@@ -3,6 +3,7 @@
 import os
 import hashlib
 import time
+import signal
 import sys
 import re
 import json
@@ -341,6 +342,8 @@ BIBLE_BOOKS = """Genesis|Exodus|Leviticus|Numbers|Deuteronomy|Joshua|Judges|Ruth
 def bible_location(label):
     """Classify explicitly named Bible chapters, without guessing other material."""
     label = " ".join(label.split())
+    if re.match(r"^Psalm\\s+\\d+\\b", label, re.I):
+        return ("Old Testament", "Psalms")
     for index, name in enumerate(BIBLE_BOOKS):
         if re.match(r"^" + re.escape(name) + r"\s+(\d+)(?:\b|$)", label, re.I):
             return ("Old Testament" if index < 39 else "New Testament", name)
@@ -360,6 +363,9 @@ class App:
         self.loaded_book = None
         self.chapters = []
         self.tree_items = {}
+        self.player_proc = None
+        self.player_paused = False
+        self.preview_path = None
         frame = ttk.Frame(root, padding=20)
         frame.pack(fill="both", expand=True)
         ttk.Label(frame, text="My Narrator", font=("Helvetica", 24, "bold")).pack(anchor="w")
@@ -381,6 +387,16 @@ class App:
         actions.pack(fill="x", pady=(0, 4))
         ttk.Button(actions, text="Select highlighted group", command=self.select_group).pack(side="left")
         ttk.Button(actions, text="Clear selection", command=lambda: self.sections.selection_remove(*self.sections.selection())).pack(side="left", padx=8)
+        player = ttk.LabelFrame(frame, text="Desktop Player", padding=8)
+        player.pack(fill="x", pady=(5, 8))
+        ttk.Label(player, text="Select a chapter above to preview or play its generated MP3.").pack(anchor="w")
+        controls = ttk.Frame(player); controls.pack(fill="x", pady=(5, 0))
+        ttk.Button(controls, text="Preview Voice", command=self.preview_chapter).pack(side="left", padx=(0, 5))
+        ttk.Button(controls, text="Play MP3", command=self.play_chapter).pack(side="left", padx=(0, 5))
+        ttk.Button(controls, text="Pause / Resume", command=self.pause_player).pack(side="left", padx=(0, 5))
+        ttk.Button(controls, text="Stop", command=self.stop_player).pack(side="left")
+        self.player_status = tk.StringVar(value="Ready")
+        ttk.Label(player, textvariable=self.player_status).pack(anchor="w", pady=(5, 0))
         self.stats = tk.StringVar(value="Analyze a book to see its sections and estimated workload.")
         ttk.Label(frame, textvariable=self.stats, wraplength=660).pack(anchor="w", pady=(0, 8))
         ttk.Label(frame, text="Narrator").pack(anchor="w")
@@ -395,6 +411,7 @@ class App:
         self.cancel_button.pack(fill="x", pady=(0, 10))
         self.log_box = tk.Text(frame, height=9, wrap="word", state="disabled")
         self.log_box.pack(fill="both", expand=True)
+        root.protocol("WM_DELETE_WINDOW", self.close)
         root.after(100, self.drain)
     def choose_book(self):
         name = filedialog.askopenfilename(filetypes=[("Books", "*.epub *.pdf"), ("All files", "*.*")])
@@ -446,6 +463,99 @@ class App:
             self.sections.selection_set(leaves)
             self.stats.set(f"Selected {len(leaves)} chapter/section entries.")
 
+    def selected_chapter(self):
+        for item in self.sections.selection():
+            if item in self.tree_items:
+                return self.tree_items[item]
+        messagebox.showinfo("Choose a chapter", "Expand a book and select a chapter first.")
+        return None
+
+    def stop_player(self):
+        if self.player_proc is not None:
+            try:
+                if self.player_proc.poll() is None:
+                    if self.player_paused:
+                        os.kill(self.player_proc.pid, signal.SIGCONT)
+                    self.player_proc.terminate()
+            except (ProcessLookupError, OSError):
+                pass
+        self.player_proc = None
+        self.player_paused = False
+        self.player_status.set("Stopped")
+
+    def pause_player(self):
+        if not self.player_proc or self.player_proc.poll() is not None:
+            self.player_status.set("Nothing playing")
+            return
+        try:
+            os.kill(self.player_proc.pid, signal.SIGCONT if self.player_paused else signal.SIGSTOP)
+            self.player_paused = not self.player_paused
+            self.player_status.set("Paused" if self.player_paused else "Playing")
+        except OSError as exc:
+            self.player_status.set(str(exc))
+
+    def play_audio(self, path, label):
+        if not shutil.which("afplay"):
+            messagebox.showerror("Player unavailable", "macOS afplay is not installed.")
+            return
+        self.stop_player()
+        self.player_proc = subprocess.Popen(["afplay", str(path)], stdout=subprocess.DEVNULL,
+                                            stderr=subprocess.DEVNULL)
+        self.player_status.set("Playing: " + label)
+        self.root.after(400, self.check_player)
+
+    def check_player(self):
+        if self.player_proc is None:
+            return
+        if self.player_proc.poll() is None:
+            self.root.after(400, self.check_player)
+        else:
+            self.player_proc = None
+            self.player_paused = False
+            self.player_status.set("Playback finished")
+
+    def preview_chapter(self):
+        index = self.selected_chapter()
+        if index is None: return
+        if not shutil.which("ksay"):
+            messagebox.showerror("Preview unavailable", "ksay is not installed.")
+            return
+        if self.button.instate(["disabled"]):
+            messagebox.showinfo("Busy", "Wait for conversion to finish before previewing.")
+            return
+        label, content = self.chapters[index]
+        sample = chunks(content)
+        if not sample: return
+        voice_id, vintage = VOICES[self.voice.get()]
+        self.player_status.set("Generating a short voice preview…")
+        def worker():
+            try:
+                preview_dir = Path(tempfile.mkdtemp(prefix="my-narrator-preview-"))
+                raw = preview_dir / "raw.mp3"
+                output = preview_dir / "preview.mp3"
+                subprocess.run(["ksay", "-v", voice_id, "-s", "0.92" if vintage else "1.0",
+                                sample[0], "-o", str(raw)], check=True, capture_output=True)
+                if vintage:
+                    encode_segment(raw, output, True)
+                else:
+                    output = raw
+                self.messages.put(("preview", (str(output), label)))
+            except Exception as exc:
+                self.messages.put(("player_error", str(exc)))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def play_chapter(self):
+        index = self.selected_chapter()
+        if index is None: return
+        book = Path(self.book.get()).expanduser()
+        label = self.chapters[index][0]
+        folder = Path(self.output.get()).expanduser() / "MP3 Chapters" / (book.stem[:55] + " - " + self.voice.get().split(" — ")[0])
+        path = folder / f"{index+1:03d} - {re.sub(r'[^a-zA-Z0-9 _-]', '', label)[:60]}.mp3"
+        if not path.is_file():
+            messagebox.showinfo("Not converted yet", "This chapter has no saved MP3. Click Preview Voice to hear a sample, or convert the selected chapter first.")
+            return
+        self.play_audio(path, label)
+
     def choose_output(self):
         name = filedialog.askdirectory()
         if name: self.output.set(name)
@@ -459,6 +569,8 @@ class App:
             while True:
                 kind, msg = self.messages.get_nowait()
                 if kind == "log": self.write(msg)
+                elif kind == "preview": self.play_audio(Path(msg[0]), msg[1] + " (preview)")
+                elif kind == "player_error": self.player_status.set("Preview failed: " + msg)
                 elif kind == "done":
                     self.button.config(state="normal")
                     self.cancel_button.config(state="disabled")
@@ -468,6 +580,10 @@ class App:
         except queue.Empty:
             pass
         self.root.after(100, self.drain)
+    def close(self):
+        self.stop_player()
+        self.root.destroy()
+
     def cancel(self):
         self.cancel_event.set()
         self.cancel_button.config(state="disabled")
