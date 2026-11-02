@@ -262,18 +262,14 @@ def load_chapters(book):
     return extract_epub(book) if book.suffix.lower() == ".epub" else extract_pdf(book)
 
 def narration_text(text, skip_verse_numbers=False):
-    """Remove verse markers while retaining ordinary numbers in the passage."""
+    """Remove verse labels while preserving numbers used in sentences."""
     if not skip_verse_numbers:
         return text
-    # A verse label at the beginning of a line (including EPUB line breaks).
-    text = re.sub(r"(?m)^(\\s*)(?:1[0-6]\\d|17[0-6]|[1-9]\\d?)\\s+(?=[A-Za-z\\u201c\\u2018])",
-                  r"\\1", text)
-    # Inline verse labels, usually between the previous verse's punctuation
-    # and the next verse's first word.
-    text = re.sub(r"(?<=[.!?;:])\\s+(?:1[0-6]\\d|17[0-6]|[1-9]\\d?)\\s+(?=[A-Za-z\\u201c\\u2018])",
+    text = re.sub(r"(?m)^(\s*)(?:1[0-6]\d|17[0-6]|[1-9]\d?)\s+(?=[A-Za-z“‘])",
+                  r"\1", text)
+    text = re.sub(r"(?<=[.!?;:])\s+(?:1[0-6]\d|17[0-6]|[1-9]\d?)\s+(?=[A-Za-z“‘])",
                   " ", text)
     return text
-
 
 def generate(book, voice, output, log, selected=None, skip_verse_numbers=False):
     for executable in ("ksay", "ffmpeg", "ffprobe"):
