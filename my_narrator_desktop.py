@@ -51,29 +51,59 @@ class TextHTML(HTMLParser):
         return "".join(self.words).strip()
 
 def extract_epub(path):
+    """Use real XHTML chapter boundaries when present, with a spine-file fallback."""
     import posixpath
     with zipfile.ZipFile(path) as z:
         container = ET.fromstring(z.read("META-INF/container.xml"))
         opf_path = next(x.attrib["full-path"] for x in container.iter() if x.tag.endswith("rootfile"))
         opf = ET.fromstring(z.read(opf_path))
-        manifest = {x.attrib["id"]: x.attrib["href"] for x in opf.iter() if x.tag.endswith("item") and "href" in x.attrib}
+        manifest = {x.attrib["id"]: x.attrib["href"] for x in opf.iter()
+                    if x.tag.endswith("item") and "href" in x.attrib}
         spine = [x.attrib["idref"] for x in opf.iter() if x.tag.endswith("itemref")]
         chapters = []
-        for i, ref in enumerate(spine, 1):
+        for ref in spine:
             href = manifest.get(ref)
-            if not href:
-                continue
+            if not href: continue
             name = posixpath.normpath(posixpath.join(posixpath.dirname(opf_path), href.split("#")[0]))
-            if name not in z.namelist():
-                continue
-            parser = TextHTML()
-            parser.feed(z.read(name).decode("utf-8", errors="replace"))
-            content = parser.get_text()
-            if len(content.strip()) >= 30:
-                heading = re.search(r"<(?:h1|h2|title)[^>]*>(.*?)</(?:h1|h2|title)>", z.read(name).decode("utf-8", errors="replace"), re.I | re.S)
-                title = re.sub(r"<[^>]+>", "", heading.group(1)).strip() if heading else ""
-                label = re.sub(r"\\s+", " ", title)[:75] if title else f"Section {len(chapters)+1}"
-                chapters.append((label, content))
+            if name not in z.namelist(): continue
+            raw = z.read(name).decode("utf-8", errors="replace")
+            try:
+                tree = ET.fromstring(raw)
+            except ET.ParseError:
+                tree = None
+            chapter_nodes = []
+            if tree is not None:
+                for node in tree.iter():
+                    if node.tag.rsplit("}", 1)[-1] == "div" and "chapter" in node.attrib.get("class", "").split():
+                        chapter_nodes.append(node)
+            if chapter_nodes:
+                for node in chapter_nodes:
+                    heading = ""
+                    for child in node.iter():
+                        if child.tag.rsplit("}", 1)[-1] == "p" and "cn" in child.attrib.get("class", "").split():
+                            heading = " ".join("".join(child.itertext()).split())
+                            break
+                    if not heading:
+                        for child in node.iter():
+                            if child.tag.rsplit("}", 1)[-1] in ("h1", "h2"):
+                                heading = " ".join("".join(child.itertext()).split())
+                                break
+                    if not heading:
+                        heading = f"Chapter {len(chapters)+1}"
+                    parser = TextHTML()
+                    parser.feed(ET.tostring(node, encoding="unicode", method="html"))
+                    content = parser.get_text()
+                    if len(content.strip()) >= 30:
+                        chapters.append((heading[:90], content))
+            else:
+                parser = TextHTML()
+                parser.feed(raw)
+                content = parser.get_text()
+                if len(content.strip()) >= 30:
+                    heading = re.search(r"<(?:h1|h2|title)[^>]*>(.*?)</(?:h1|h2|title)>", raw, re.I | re.S)
+                    title = re.sub(r"<[^>]+>", "", heading.group(1)).strip() if heading else ""
+                    label = re.sub(r"\\s+", " ", title)[:75] if title else f"Section {len(chapters)+1}"
+                    chapters.append((label, content))
         return chapters
 
 def extract_pdf(path):
