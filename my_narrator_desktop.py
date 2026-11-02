@@ -336,6 +336,16 @@ def generate(book, voice, output, log, selected=None):
     log(f"COMPLETE: {m4b}")
     return m4b
 
+BIBLE_BOOKS = """Genesis|Exodus|Leviticus|Numbers|Deuteronomy|Joshua|Judges|Ruth|1 Samuel|2 Samuel|1 Kings|2 Kings|1 Chronicles|2 Chronicles|Ezra|Nehemiah|Esther|Job|Psalms|Proverbs|Ecclesiastes|Song of Songs|Isaiah|Jeremiah|Lamentations|Ezekiel|Daniel|Hosea|Joel|Amos|Obadiah|Jonah|Micah|Nahum|Habakkuk|Zephaniah|Haggai|Zechariah|Malachi|Matthew|Mark|Luke|John|Acts|Romans|1 Corinthians|2 Corinthians|Galatians|Ephesians|Philippians|Colossians|1 Thessalonians|2 Thessalonians|1 Timothy|2 Timothy|Titus|Philemon|Hebrews|James|1 Peter|2 Peter|1 John|2 John|3 John|Jude|Revelation""".split("|")
+
+def bible_location(label):
+    """Classify explicitly named Bible chapters, without guessing other material."""
+    label = " ".join(label.split())
+    for index, name in enumerate(BIBLE_BOOKS):
+        if re.match(r"^" + re.escape(name) + r"\\s+(\\d+)(?:\\b|$)", label, re.I):
+            return ("Old Testament" if index < 39 else "New Testament", name)
+    return ("Additional Material", "Other Sections")
+
 class App:
     def __init__(self, root):
         self.root = root
@@ -349,6 +359,7 @@ class App:
         self.cancel_event = CANCEL_EVENT
         self.loaded_book = None
         self.chapters = []
+        self.tree_items = {}
         frame = ttk.Frame(root, padding=20)
         frame.pack(fill="both", expand=True)
         ttk.Label(frame, text="My Narrator", font=("Helvetica", 24, "bold")).pack(anchor="w")
@@ -358,9 +369,18 @@ class App:
         ttk.Entry(row, textvariable=self.book).pack(side="left", fill="x", expand=True)
         ttk.Button(row, text="Choose Book", command=self.choose_book).pack(side="left", padx=(8, 0))
         ttk.Button(frame, text="Analyze Book / Load Sections", command=self.analyze).pack(fill="x", pady=(0, 6))
-        ttk.Label(frame, text="Sections (select one or multiple; Cmd-click to select multiple)").pack(anchor="w")
-        self.sections = tk.Listbox(frame, selectmode="extended", height=7, exportselection=False)
-        self.sections.pack(fill="both", pady=(3, 4))
+        ttk.Label(frame, text="Browse books and chapters (Cmd-click to select multiple chapters)").pack(anchor="w")
+        section_frame = ttk.Frame(frame)
+        section_frame.pack(fill="both", expand=True, pady=(3, 4))
+        self.sections = ttk.Treeview(section_frame, show="tree", selectmode="extended", height=9)
+        scrollbar = ttk.Scrollbar(section_frame, orient="vertical", command=self.sections.yview)
+        self.sections.configure(yscrollcommand=scrollbar.set)
+        self.sections.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        actions = ttk.Frame(frame)
+        actions.pack(fill="x", pady=(0, 4))
+        ttk.Button(actions, text="Select highlighted group", command=self.select_group).pack(side="left")
+        ttk.Button(actions, text="Clear selection", command=lambda: self.sections.selection_remove(*self.sections.selection())).pack(side="left", padx=8)
         self.stats = tk.StringVar(value="Analyze a book to see its sections and estimated workload.")
         ttk.Label(frame, textvariable=self.stats, wraplength=660).pack(anchor="w", pady=(0, 8))
         ttk.Label(frame, text="Narrator").pack(anchor="w")
@@ -381,7 +401,8 @@ class App:
         if name:
             self.book.set(name)
             self.loaded_book = None
-            self.sections.delete(0, "end")
+            self.sections.delete(*self.sections.get_children())
+            self.tree_items = {}
             self.stats.set("Click Analyze Book to load sections.")
     def analyze(self):
         book = Path(self.book.get()).expanduser()
@@ -392,13 +413,37 @@ class App:
             self.chapters = load_chapters(book)
             self.loaded_book = book.resolve()
             self.sections.delete(0, "end")
+            groups = {}
             for i, (label, content) in enumerate(self.chapters):
-                self.sections.insert("end", f"{i+1:03d}  {label} ({len(content.split()):,} words)")
+                testament, book_name = bible_location(label)
+                if testament not in groups:
+                    groups[testament] = self.sections.insert("", "end", text=testament, open=True)
+                key = (testament, book_name)
+                if key not in groups:
+                    groups[key] = self.sections.insert(groups[testament], "end", text=book_name, open=False)
+                item = self.sections.insert(groups[key], "end",
+                    text=f"{label} ({len(content.split()):,} words)")
+                self.tree_items[item] = i
             total = sum(len(chunks(text)) for _, text in self.chapters)
             self.stats.set(f"{len(self.chapters)} sections · {total:,} estimated audio segments. Select sections below.")
-            if self.chapters: self.sections.selection_set(0)
+            if self.chapters and self.tree_items:
+                self.sections.selection_set(next(iter(self.tree_items)))
         except Exception as e:
             messagebox.showerror("Could not analyze book", str(e))
+
+    def select_group(self):
+        selected = self.sections.selection()
+        leaves = []
+        def collect(item):
+            if item in self.tree_items:
+                leaves.append(item)
+            for child in self.sections.get_children(item):
+                collect(child)
+        for item in selected:
+            collect(item)
+        if leaves:
+            self.sections.selection_set(leaves)
+            self.stats.set(f"Selected {len(leaves)} chapter/section entries.")
 
     def choose_output(self):
         name = filedialog.askdirectory()
@@ -435,9 +480,9 @@ class App:
         if self.loaded_book != book.resolve():
             self.analyze()
             if self.loaded_book != book.resolve(): return
-        selected = list(self.sections.curselection())
+        selected = sorted({self.tree_items[item] for item in self.sections.selection() if item in self.tree_items})
         if not selected:
-            messagebox.showerror("Select sections", "Select at least one section to convert.")
+            messagebox.showerror("Select sections", "Select chapters, or highlight a book and click Select highlighted group.")
             return
         selected_count = sum(len(chunks(self.chapters[i][1])) for i in selected)
         self.write(f"Selected {len(selected)} sections, {selected_count:,} segments. Existing segments will be reused.")
