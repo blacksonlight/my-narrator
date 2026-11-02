@@ -66,7 +66,7 @@ async function parseEPUB(file){
     const path=resolvePath(base,decodeURIComponent(href.split('#')[0]));
     const entry=zip.file(path);if(!entry)continue;
     const doc=new DOMParser().parseFromString(await entry.async('text'),'text/html');
-    doc.querySelectorAll('script,style,nav').forEach(el=>el.remove());
+    doc.querySelectorAll('script,style,nav,span.ver').forEach(el=>el.remove());
     const chapters=Array.from(doc.querySelectorAll('div.chapter'));
     if(chapters.length){
       for(const chapter of chapters){
