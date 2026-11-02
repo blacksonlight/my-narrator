@@ -397,9 +397,21 @@ class App:
                 canvas.yview_scroll(-steps, "units")
                 self._wheel_remainder -= steps
             return "break"
-        root.bind_all("<MouseWheel>", wheel)
-        root.bind_all("<Button-4>", lambda e: canvas.yview_scroll(-3, "units"))
-        root.bind_all("<Button-5>", lambda e: canvas.yview_scroll(3, "units"))
+        # Route gestures from labels, frames, buttons and other controls to the
+        # page before Tk's native widget bindings can swallow them.
+        root.bind_class("NarratorPageWheel", "<MouseWheel>", wheel)
+        root.bind_class("NarratorPageWheel", "<Button-4>",
+                        lambda e: canvas.yview_scroll(-3, "units"))
+        root.bind_class("NarratorPageWheel", "<Button-5>",
+                        lambda e: canvas.yview_scroll(3, "units"))
+        def enable_page_wheel(widget):
+            if widget is self.sections or widget is self.log_box:
+                return
+            tags = widget.bindtags()
+            if "NarratorPageWheel" not in tags:
+                widget.bindtags(("NarratorPageWheel",) + tags)
+            for child in widget.winfo_children():
+                enable_page_wheel(child)
         ttk.Label(frame, text="My Narrator", font=("Helvetica", 24, "bold")).pack(anchor="w")
         ttk.Label(frame, text="Generate locally. AirDrop or iCloud to iPhone.").pack(anchor="w", pady=(0, 15))
         ttk.Label(frame, text="PDF or DRM-free EPUB").pack(anchor="w")
@@ -443,6 +455,7 @@ class App:
         self.cancel_button.pack(fill="x", pady=(0, 10))
         self.log_box = tk.Text(frame, height=5, wrap="word", state="disabled")
         self.log_box.pack(fill="both", expand=True)
+        enable_page_wheel(root)
         root.protocol("WM_DELETE_WINDOW", self.close)
         root.after(100, self.drain)
     def choose_book(self):
