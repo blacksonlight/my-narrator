@@ -93,7 +93,7 @@ function bibleLocation(title){
   for(let i=0;i<bibleBooks.length;i++){
     const book=bibleBooks[i];
     const escaped=book.replace(/[.*+?^$\u007b\u007d()|[\]\\]/g,'\\$&');
-    const match=label.match(new RegExp('^'+escaped+'\\\\s+(\\\\d+)\\\\b','i'));
+    const match=label.match(new RegExp('^'+escaped+'\\s+(\\d+)\\b','i'));
     if(match)return {testament:i<39?'Old Testament':'New Testament',book,chapter:match[1]};
   }
   return {testament:'Additional Material',book:'Other Sections',chapter:null};
