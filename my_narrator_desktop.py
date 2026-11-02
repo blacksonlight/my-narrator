@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """My Narrator Desktop: local EPUB/PDF -> chapter MP3s and chaptered M4B."""
 import os
+import sys
 import re
 import json
 import shutil
@@ -14,6 +15,10 @@ from xml.etree import ElementTree as ET
 from html.parser import HTMLParser
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+
+# Finder launches do not inherit your interactive shell's PATH.
+EXTRA_PATHS = ["/opt/homebrew/bin", "/usr/local/bin", str(Path.home() / ".local" / "bin"), str(Path.home() / ".cargo" / "bin")]
+os.environ["PATH"] = os.pathsep.join(EXTRA_PATHS + [os.environ.get("PATH", "")])
 
 VOICES = {
     "GOD GUIDED — Lost Archive V6": ("am_onyx", True),
