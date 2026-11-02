@@ -342,7 +342,7 @@ def bible_location(label):
     """Classify explicitly named Bible chapters, without guessing other material."""
     label = " ".join(label.split())
     for index, name in enumerate(BIBLE_BOOKS):
-        if re.match(r"^" + re.escape(name) + r"\\s+(\\d+)(?:\\b|$)", label, re.I):
+        if re.match(r"^" + re.escape(name) + r"\s+(\d+)(?:\b|$)", label, re.I):
             return ("Old Testament" if index < 39 else "New Testament", name)
     return ("Additional Material", "Other Sections")
 
