@@ -21,7 +21,6 @@ EXTRA_PATHS = ["/opt/homebrew/bin", "/usr/local/bin", str(Path.home() / ".local"
 os.environ["PATH"] = os.pathsep.join(EXTRA_PATHS + [os.environ.get("PATH", "")])
 
 VOICES = {
-    "GOD GUIDED — Lost Archive V6": ("am_onyx", True),
     "Michael — American male": ("am_michael", False),
     "Heart — American female": ("af_heart", False),
     "George — British male": ("bm_george", False),
@@ -235,7 +234,7 @@ class App:
         root.minsize(540, 440)
         self.book = tk.StringVar()
         self.output = tk.StringVar(value=str(Path.home() / "Music" / "My Narrator"))
-        self.voice = tk.StringVar(value="GOD GUIDED — Lost Archive V6")
+        self.voice = tk.StringVar(value="Michael — American male")
         self.messages = queue.Queue()
         self.cancel_event = CANCEL_EVENT
         frame = ttk.Frame(root, padding=20)
