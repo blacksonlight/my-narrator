@@ -85,16 +85,43 @@ async function parseEPUB(file){
 }
 function resolvePath(base,path){let segments=(base+path).split('/'),out=[];for(let p of segments){if(p==='..')out.pop();else if(p&&p!=='.')out.push(p)}return out.join('/')}
 $('file').onchange=async e=>{let file=e.target.files[0];if(!file||!db)return;try{updateStatus('Importing '+file.name+'…');let sections=file.name.toLowerCase().endsWith('.pdf')?await parsePDF(file):await parseEPUB(file),chunks=sections.flatMap(x=>splitText(x.text));if(!chunks.length)throw Error('No readable text found. Scanned PDFs need OCR.');let b={id:crypto.randomUUID(),name:file.name,parts:chunks,sections:sections.map(x=>({title:x.title,parts:splitText(x.text)})),position:0};await save(b);await refresh();openBook(b.id);updateStatus('Imported '+chunks.length+' narration segments.')}catch(err){updateStatus('Import failed: '+err.message)}e.target.value=''};
+const bibleBooks="Genesis|Exodus|Leviticus|Numbers|Deuteronomy|Joshua|Judges|Ruth|1 Samuel|2 Samuel|1 Kings|2 Kings|1 Chronicles|2 Chronicles|Ezra|Nehemiah|Esther|Job|Psalms|Proverbs|Ecclesiastes|Song of Songs|Isaiah|Jeremiah|Lamentations|Ezekiel|Daniel|Hosea|Joel|Amos|Obadiah|Jonah|Micah|Nahum|Habakkuk|Zephaniah|Haggai|Zechariah|Malachi|Matthew|Mark|Luke|John|Acts|Romans|1 Corinthians|2 Corinthians|Galatians|Ephesians|Philippians|Colossians|1 Thessalonians|2 Thessalonians|1 Timothy|2 Timothy|Titus|Philemon|Hebrews|James|1 Peter|2 Peter|1 John|2 John|3 John|Jude|Revelation".split('|');
+function chapterGroup(title){
+  const name=bibleBooks.find(b=>new RegExp('^'+b.replace(/[.*+?^$\u007b\u007d()|[\]\\]/g,'\\$&')+'\\s+\\d+\\b','i').test((title||'').trim()));
+  if(!name)return 'Additional Material / Other Sections';
+  return (bibleBooks.indexOf(name)<39?'Old Testament':'New Testament')+' / '+name;
+}
 function populateSections(){
-  for(const id of ['section','exportSection']){
-    const select=$(id);if(!select)return;select.replaceChildren();
-    const all=document.createElement('option');all.value='all';all.textContent='Entire book';select.append(all);
-    for(let i=0;i<(active?.sections||[]).length;i++){
-      const o=document.createElement('option');o.value=String(i);o.textContent=(i+1)+'. '+active.sections[i].title;select.append(o);
+  const sections=active?.sections||[];
+  for(const [groupId,sectionId] of [['bookGroup','section'],['exportGroup','exportSection']]){
+    const group=$(groupId);group.replaceChildren();
+    const all=document.createElement('option');all.value='all';all.textContent='Entire book';group.append(all);
+    const names=[...new Set(sections.map(x=>chapterGroup(x.title)))];
+    for(const name of names){
+      const opt=document.createElement('option');opt.value=name;opt.textContent=name;group.append(opt);
     }
+    const update=()=>{
+      const selected=group.value,select=$(sectionId);select.replaceChildren();
+      const all=document.createElement('option');all.value='all';all.textContent=selected==='all'?'Entire book':'All sections in this book';select.append(all);
+      for(let i=0;i<sections.length;i++){
+        if(selected!=='all'&&chapterGroup(sections[i].title)!==selected)continue;
+        const o=document.createElement('option');o.value=String(i);o.textContent=sections[i].title;select.append(o);
+      }
+      if(sectionId==='section')chooseReadingSection();
+    };
+    group.onchange=update;update();
   }
 }
-function openBook(id){let b=books.find(x=>x.id===id);if(!b)return;stop();active=b;parts=b.parts;populateSections();idx=Math.min(b.position||0,parts.length-1);localStorage.setItem('lastBook',id);$('title').textContent=b.name;show()};$('section').onchange=()=>{if(!active)return;stop();const n=$('section').value;if(n==='all'){parts=active.parts;idx=0}else{parts=active.sections[Number(n)].parts;idx=0}show()};
+function chooseReadingSection(){
+  if(!active)return;
+  stop();
+  const n=$('section').value,group=$('bookGroup').value;
+  if(n!=='all')parts=active.sections[Number(n)].parts;
+  else if(group==='all')parts=active.parts;
+  else parts=active.sections.filter(x=>chapterGroup(x.title)===group).flatMap(x=>x.parts);
+  idx=0;show();
+}
+function openBook(id){let b=books.find(x=>x.id===id);if(!b)return;stop();active=b;parts=b.parts;populateSections();idx=Math.min(b.position||0,parts.length-1);localStorage.setItem('lastBook',id);$('title').textContent=b.name;show()};$('section').onchange=chooseReadingSection;
 function show(){if(!active)return;$('reading').textContent=parts.slice(Math.max(0,idx-1),Math.min(parts.length,idx+4)).join('\n\n');updateStatus('Segment '+(idx+1)+' of '+parts.length)};async function persist(){if(!active)return;active.position=idx;await save(active)};function stop(){token++;playing=false;synth?.cancel()};function speak(){if(!active||!synth)return;stop();playing=true;const current=token;function next(){if(!playing||current!==token)return;if(idx>=parts.length){playing=false;updateStatus('Finished!');return}show();persist();let u=new SpeechSynthesisUtterance(parts[idx]);u.rate=Number($('speed').value);let v=synth.getVoices().find(v=>v.voiceURI===$('voice').value);if(v)u.voice=v;u.onend=()=>{if(current!==token||!playing)return;idx++;next()};u.onerror=e=>{if(current!==token)return;playing=false;updateStatus('Speech stopped: '+e.error)};synth.speak(u)}next()};$('play').onclick=()=>{if(!active)return;if(synth?.paused&&playing){synth.resume();return}speak()};$('pause').onclick=()=>{if(synth?.speaking&&!synth.paused){synth.pause();updateStatus('Paused')}else if(synth?.paused){synth.resume();show()}};$('prev').onclick=()=>{if(!active)return;idx=Math.max(0,idx-1);persist();speak()};$('next').onclick=()=>{if(!active)return;idx=Math.min(parts.length-1,idx+1);persist();speak()};$('speed').oninput=()=>{$('speedLabel').textContent=Number($('speed').value).toFixed(1)+'×'};function voices(){let old=$('voice').value;$('voice').replaceChildren();for(let v of synth?.getVoices()||[]){let opt=document.createElement('option');opt.value=v.voiceURI;opt.textContent=v.name+' ('+v.lang+')';$('voice').append(opt)}if(old)$('voice').value=old};if(synth){voices();synth.onvoiceschanged=voices}document.addEventListener('visibilitychange',()=>{if(document.hidden&&active)persist()});if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
 
 
@@ -103,7 +130,7 @@ $('exportBook').onclick=()=>{
   if(!active){updateStatus('Open a book before exporting.');return;}
   const safe=active.name.replace(/\.[^.]+$/,'').replace(/[^a-z0-9_-]+/gi,'-').slice(0,90)||'book';
   const voice=$('exportVoice').value;
-  const choice=$('exportSection').value;const selected=choice==='all'||!active.sections?active.parts:active.sections[Number(choice)].parts;
+  const choice=$('exportSection').value,group=$('exportGroup').value;const selected=choice!=='all'?active.sections[Number(choice)].parts:group==='all'||!active.sections?active.parts:active.sections.filter(x=>chapterGroup(x.title)===group).flatMap(x=>x.parts);
   const body='MY_NARRATOR_EXPORT\n'+JSON.stringify({title:active.name,voice,section:choice})+'\n'+selected.join('\n\n');
   const url=URL.createObjectURL(new Blob([body],{type:'text/plain;charset=utf-8'}));
   const link=document.createElement('a');link.href=url;link.download=safe+'.txt';document.body.append(link);link.click();link.remove();
