@@ -261,7 +261,15 @@ def make_m4b(mp3s, labels, destination, temp):
 def load_chapters(book):
     return extract_epub(book) if book.suffix.lower() == ".epub" else extract_pdf(book)
 
-def generate(book, voice, output, log, selected=None):
+def narration_text(text, skip_verse_numbers=False):
+    """Suppress standalone Bible verse labels, not numbers inside sentences."""
+    if not skip_verse_numbers:
+        return text
+    return re.sub(r"(^|(?<=[.!?])\\s+)(?:1[0-6]\\d|17[0-6]|[1-9]\\d?)\\s+(?=[A-Za-z\u201c\u2018])",
+                  lambda match: match.group(1), text)
+
+
+def generate(book, voice, output, log, selected=None, skip_verse_numbers=False):
     for executable in ("ksay", "ffmpeg", "ffprobe"):
         if not shutil.which(executable):
             raise RuntimeError(f"{executable} not found on PATH. See DESKTOP.md.")
@@ -275,12 +283,12 @@ def generate(book, voice, output, log, selected=None):
     voice_id, vintage = VOICES[voice]
     # Hash book contents, voice and selected text to isolate cached audio.
     digest = hashlib.sha256(book.read_bytes()).hexdigest()[:16]
-    voice_key = hashlib.sha256((voice + repr(VOICES[voice])).encode()).hexdigest()[:10]
+    voice_key = hashlib.sha256((voice + repr(VOICES[voice]) + "|skip-verses=" + str(skip_verse_numbers)).encode()).hexdigest()[:10]
     workspace = output / ".my-narrator-cache" / (digest + "-" + voice_key)
     workspace.mkdir(parents=True, exist_ok=True)
     chapter_dir = output / "MP3 Chapters" / (book.stem[:55] + " - " + voice.split(" — ")[0])
     chapter_dir.mkdir(parents=True, exist_ok=True)
-    work = [(i, chapters[i][0], chunks(chapters[i][1])) for i in indices]
+    work = [(i, chapters[i][0], chunks(narration_text(chapters[i][1], skip_verse_numbers))) for i in indices]
     total = sum(len(pieces) for _, _, pieces in work)
     done = 0
     start = time.monotonic()
@@ -358,6 +366,7 @@ class App:
         self.book = tk.StringVar()
         self.output = tk.StringVar(value=str(Path.home() / "Music" / "My Narrator"))
         self.voice = tk.StringVar(value="Michael — American male")
+        self.skip_verse_numbers = tk.BooleanVar(value=True)
         self.messages = queue.Queue()
         self.cancel_event = CANCEL_EVENT
         self.loaded_book = None
@@ -406,6 +415,7 @@ class App:
         ttk.Entry(row, textvariable=self.book).pack(side="left", fill="x", expand=True)
         ttk.Button(row, text="Choose Book", command=self.choose_book).pack(side="left", padx=(8, 0))
         ttk.Button(frame, text="Analyze Book / Load Sections", command=self.analyze).pack(fill="x", pady=(0, 6))
+        ttk.Checkbutton(frame, text="Skip Bible verse numbers in narration", variable=self.skip_verse_numbers).pack(anchor="w", pady=(0, 8))
         ttk.Label(frame, text="Browse books and chapters (Cmd-click to select multiple chapters)").pack(anchor="w")
         section_frame = ttk.Frame(frame)
         section_frame.pack(fill="both", expand=True, pady=(3, 4))
@@ -555,7 +565,7 @@ class App:
             messagebox.showinfo("Busy", "Wait for conversion to finish before previewing.")
             return
         label, content = self.chapters[index]
-        sample = chunks(content)
+        sample = chunks(narration_text(content, self.skip_verse_numbers.get()))
         if not sample: return
         voice_id, vintage = VOICES[self.voice.get()]
         self.player_status.set("Generating a short voice preview…")
@@ -641,7 +651,7 @@ class App:
         def worker():
             try:
                 result = generate(book, self.voice.get(), Path(self.output.get()).expanduser(),
-                                  lambda msg: self.messages.put(("log", msg)), selected)
+                                  lambda msg: self.messages.put(("log", msg)), selected, self.skip_verse_numbers.get())
                 self.messages.put(("done", str(result)))
             except ConversionCancelled:
                 self.messages.put(("done", "CANCELLED"))
