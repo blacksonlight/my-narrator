@@ -370,10 +370,16 @@ class App:
         outer = ttk.Frame(root)
         outer.pack(fill="both", expand=True)
         canvas = tk.Canvas(outer, highlightthickness=0, borderwidth=0)
-        page_scroll = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        page_scroll = tk.Scrollbar(outer, orient="vertical", command=canvas.yview, width=20,
+                                   relief="raised", bg="#8498b5", troughcolor="#e4e9f0",\n                                   activebackground="#54739e")
         canvas.configure(yscrollcommand=page_scroll.set)
         page_scroll.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
+        # Explicit navigation buttons remain visible even with macOS auto-hidden scrollbars.
+        scroll_controls = ttk.Frame(root)
+        scroll_controls.pack(side="bottom", fill="x")
+        ttk.Button(scroll_controls, text="▲ Scroll up", command=lambda: canvas.yview_scroll(-5, "units")).pack(side="left", padx=8, pady=3)
+        ttk.Button(scroll_controls, text="▼ Scroll down", command=lambda: canvas.yview_scroll(5, "units")).pack(side="right", padx=8, pady=3)
         frame = ttk.Frame(canvas, padding=20)
         window_id = canvas.create_window((0, 0), window=frame, anchor="nw")
         frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
@@ -387,6 +393,8 @@ class App:
             if delta:
                 canvas.yview_scroll(-int(delta / abs(delta)), "units")
         root.bind_all("<MouseWheel>", wheel, add="+")
+        root.bind_all("<Button-4>", lambda e: canvas.yview_scroll(-3, "units"), add="+")
+        root.bind_all("<Button-5>", lambda e: canvas.yview_scroll(3, "units"), add="+")
         ttk.Label(frame, text="My Narrator", font=("Helvetica", 24, "bold")).pack(anchor="w")
         ttk.Label(frame, text="Generate locally. AirDrop or iCloud to iPhone.").pack(anchor="w", pady=(0, 15))
         ttk.Label(frame, text="PDF or DRM-free EPUB").pack(anchor="w")
