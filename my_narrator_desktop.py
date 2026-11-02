@@ -108,8 +108,30 @@ def chunks(text, limit=480):
         result.append(current)
     return [s for s in result if s]
 
+class ConversionCancelled(Exception):
+    pass
+
+CANCEL_EVENT = threading.Event()
+
 def run(args):
-    subprocess.run(args, check=True, stdout=subprocess.DEVNULL)
+    if CANCEL_EVENT.is_set():
+        raise ConversionCancelled()
+    proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, start_new_session=True)
+    try:
+        while proc.poll() is None:
+            if CANCEL_EVENT.wait(0.15):
+                import signal
+                try: os.killpg(proc.pid, signal.SIGTERM)
+                except ProcessLookupError: pass
+                try: proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                    proc.wait()
+                raise ConversionCancelled()
+        if proc.returncode:
+            raise subprocess.CalledProcessError(proc.returncode, args)
+    finally:
+        if proc.poll() is None: proc.terminate()
 
 def duration_ms(path):
     output = subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -144,7 +166,7 @@ def concat_mp3(files, destination, temp):
     # temp paths are under our control and do not contain newlines.
     playlist.write_text("".join("file '" + str(f).replace("'", "'\\''") + "'\n" for f in files))
     run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0",
-         "-i", str(playlist), "-c", "copy", str(destination)])
+         "-i", str(playlist), "-c:a", "libmp3lame", "-b:a", "192k", str(destination)])
 
 def make_m4b(mp3s, labels, destination, temp):
     durations = [duration_ms(p) for p in mp3s]
@@ -215,6 +237,7 @@ class App:
         self.output = tk.StringVar(value=str(Path.home() / "Music" / "My Narrator"))
         self.voice = tk.StringVar(value="GOD GUIDED — Lost Archive V6")
         self.messages = queue.Queue()
+        self.cancel_event = CANCEL_EVENT
         frame = ttk.Frame(root, padding=20)
         frame.pack(fill="both", expand=True)
         ttk.Label(frame, text="My Narrator", font=("Helvetica", 24, "bold")).pack(anchor="w")
@@ -230,7 +253,9 @@ class App:
         ttk.Entry(row, textvariable=self.output).pack(side="left", fill="x", expand=True)
         ttk.Button(row, text="Browse", command=self.choose_output).pack(side="left", padx=(8, 0))
         self.button = ttk.Button(frame, text="Generate MP3 Chapters + iPhone M4B", command=self.start)
-        self.button.pack(fill="x", pady=(4, 10))
+        self.button.pack(fill="x", pady=(4, 5))
+        self.cancel_button = ttk.Button(frame, text="Cancel Conversion", command=self.cancel, state="disabled")
+        self.cancel_button.pack(fill="x", pady=(0, 10))
         self.log_box = tk.Text(frame, height=9, wrap="word", state="disabled")
         self.log_box.pack(fill="both", expand=True)
         root.after(100, self.drain)
@@ -252,23 +277,34 @@ class App:
                 if kind == "log": self.write(msg)
                 elif kind == "done":
                     self.button.config(state="normal")
-                    if msg.startswith("ERROR:"): messagebox.showerror("Conversion failed", msg)
+                    self.cancel_button.config(state="disabled")
+                    if msg == "CANCELLED": self.write("Conversion cancelled. Completed chapters may remain in output.")
+                    elif msg.startswith("ERROR:"): messagebox.showerror("Conversion failed", msg)
                     else: messagebox.showinfo("Audiobook ready", "Saved your M4B and MP3 chapters.\n\n" + msg)
         except queue.Empty:
             pass
         self.root.after(100, self.drain)
+    def cancel(self):
+        self.cancel_event.set()
+        self.cancel_button.config(state="disabled")
+        self.write("Stopping conversion...")
+
     def start(self):
         book = Path(self.book.get()).expanduser()
         if not book.is_file() or book.suffix.lower() not in (".pdf", ".epub"):
             messagebox.showerror("Select a book", "Choose a valid PDF or EPUB file.")
             return
+        self.cancel_event.clear()
         self.button.config(state="disabled")
+        self.cancel_button.config(state="normal")
         self.write("Starting audiobook generation...")
         def worker():
             try:
                 result = generate(book, self.voice.get(), Path(self.output.get()).expanduser(),
                                   lambda msg: self.messages.put(("log", msg)))
                 self.messages.put(("done", str(result)))
+            except ConversionCancelled:
+                self.messages.put(("done", "CANCELLED"))
             except Exception as e:
                 self.messages.put(("done", "ERROR: " + str(e)))
         threading.Thread(target=worker, daemon=True).start()
