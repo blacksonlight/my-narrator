@@ -262,11 +262,17 @@ def load_chapters(book):
     return extract_epub(book) if book.suffix.lower() == ".epub" else extract_pdf(book)
 
 def narration_text(text, skip_verse_numbers=False):
-    """Suppress standalone Bible verse labels, not numbers inside sentences."""
+    """Remove verse markers while retaining ordinary numbers in the passage."""
     if not skip_verse_numbers:
         return text
-    return re.sub(r"(^|(?<=[.!?])\\s+)(?:1[0-6]\\d|17[0-6]|[1-9]\\d?)\\s+(?=[A-Za-z\u201c\u2018])",
-                  lambda match: match.group(1), text)
+    # A verse label at the beginning of a line (including EPUB line breaks).
+    text = re.sub(r"(?m)^(\\s*)(?:1[0-6]\\d|17[0-6]|[1-9]\\d?)\\s+(?=[A-Za-z\\u201c\\u2018])",
+                  r"\\1", text)
+    # Inline verse labels, usually between the previous verse's punctuation
+    # and the next verse's first word.
+    text = re.sub(r"(?<=[.!?;:])\\s+(?:1[0-6]\\d|17[0-6]|[1-9]\\d?)\\s+(?=[A-Za-z\\u201c\\u2018])",
+                  " ", text)
+    return text
 
 
 def generate(book, voice, output, log, selected=None, skip_verse_numbers=False):
@@ -374,6 +380,7 @@ class App:
         self.tree_items = {}
         self.player_proc = None
         self.player_paused = False
+        self.stream_stop = threading.Event()
         self.preview_path = None
         # Scroll the entire studio so playback and conversion controls remain reachable.
         outer = ttk.Frame(root)
@@ -430,9 +437,10 @@ class App:
         ttk.Button(actions, text="Clear selection", command=lambda: self.sections.selection_remove(*self.sections.selection())).pack(side="left", padx=8)
         player = ttk.LabelFrame(frame, text="Desktop Player", padding=8)
         player.pack(fill="x", pady=(5, 8))
-        ttk.Label(player, text="Select a chapter above to preview or play its generated MP3.").pack(anchor="w")
+        ttk.Label(player, text="Select a chapter to listen immediately or play a saved MP3.").pack(anchor="w")
         controls = ttk.Frame(player); controls.pack(fill="x", pady=(5, 0))
         ttk.Button(controls, text="Preview Voice", command=self.preview_chapter).pack(side="left", padx=(0, 5))
+        ttk.Button(controls, text="Read Chapter", command=self.read_chapter).pack(side="left", padx=(0, 5))
         ttk.Button(controls, text="Play MP3", command=self.play_chapter).pack(side="left", padx=(0, 5))
         ttk.Button(controls, text="Pause / Resume", command=self.pause_player).pack(side="left", padx=(0, 5))
         ttk.Button(controls, text="Stop", command=self.stop_player).pack(side="left")
@@ -512,6 +520,7 @@ class App:
         return None
 
     def stop_player(self):
+        self.stream_stop.set()
         if self.player_proc is not None:
             try:
                 if self.player_proc.poll() is None:
@@ -585,6 +594,72 @@ class App:
                 self.messages.put(("player_error", str(exc)))
         threading.Thread(target=worker, daemon=True).start()
 
+    def read_chapter(self):
+        """Read an unconverted chapter, synthesizing one short segment at a time."""
+        index = self.selected_chapter()
+        if index is None:
+            return
+        if not shutil.which("ksay") or not shutil.which("afplay"):
+            messagebox.showerror("Player unavailable", "ksay and afplay are required.")
+            return
+        if self.button.instate(["disabled"]):
+            messagebox.showinfo("Busy", "Wait until conversion is finished.")
+            return
+        label, content = self.chapters[index]
+        passages = chunks(narration_text(content, self.skip_verse_numbers.get()))
+        if not passages:
+            return
+        self.stop_player()
+        self.stream_stop = threading.Event()
+        cancelled = self.stream_stop
+        voice_id, vintage = VOICES[self.voice.get()]
+        self.player_status.set("Preparing chapter narration…")
+        def worker():
+            try:
+                with tempfile.TemporaryDirectory(prefix="my-narrator-read-") as temp:
+                    for number, passage in enumerate(passages, 1):
+                        if cancelled.is_set():
+                            break
+                        path = Path(temp) / "segment.mp3"
+                        result = subprocess.run(
+                            ["ksay", "-v", voice_id, "-s", "0.92" if vintage else "1.0",
+                             passage, "-o", str(path)],
+                            capture_output=True, text=True)
+                        if cancelled.is_set():
+                            break
+                        if result.returncode:
+                            raise RuntimeError(result.stderr.strip() or "ksay failed")
+                        if vintage:
+                            filtered = Path(temp) / "filtered.mp3"
+                            encode_segment(path, filtered, True)
+                            path = filtered
+                        if cancelled.is_set():
+                            break
+                        proc = subprocess.Popen(["afplay", str(path)], stdout=subprocess.DEVNULL,
+                                                stderr=subprocess.DEVNULL)
+                        self.player_proc = proc
+                        self.messages.put(("reading", f"Reading {label}: segment {number}/{len(passages)}"))
+                        while proc.poll() is None:
+                            if cancelled.wait(0.1):
+                                try:
+                                    if self.player_paused:
+                                        os.kill(proc.pid, signal.SIGCONT)
+                                    proc.terminate()
+                                except (ProcessLookupError, OSError):
+                                    pass
+                                break
+                        proc.wait()
+                        self.player_proc = None
+                        self.player_paused = False
+                        if cancelled.is_set():
+                            break
+                if not cancelled.is_set():
+                    self.messages.put(("reading", "Chapter finished"))
+            except Exception as exc:
+                if not cancelled.is_set():
+                    self.messages.put(("player_error", str(exc))
+        threading.Thread(target=worker, daemon=True).start()
+
     def play_chapter(self):
         index = self.selected_chapter()
         if index is None: return
@@ -611,6 +686,7 @@ class App:
                 kind, msg = self.messages.get_nowait()
                 if kind == "log": self.write(msg)
                 elif kind == "preview": self.play_audio(Path(msg[0]), msg[1] + " (preview)")
+                elif kind == "reading": self.player_status.set(msg)
                 elif kind == "player_error": self.player_status.set("Preview failed: " + msg)
                 elif kind == "done":
                     self.button.config(state="normal")
