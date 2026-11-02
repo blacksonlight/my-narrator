@@ -74,12 +74,19 @@ def extract_epub(path):
                     super().__init__()
                     self.depth = 0
                     self.active = False
+                    self.verse_depth = 0
                     self.heading = False
                     self.heading_words = []
                     self.words = []
                     self.found = []
                 def handle_starttag(self, tag, attrs):
                     attrs = dict(attrs)
+                    if self.verse_depth:
+                        self.verse_depth += 1
+                        return
+                    if tag == "span" and "ver" in attrs.get("class", "").split():
+                        self.verse_depth = 1
+                        return
                     if tag == "div":
                         if self.active:
                             self.depth += 1
@@ -94,10 +101,13 @@ def extract_epub(path):
                         if tag in ("p", "div", "br", "li", "h1", "h2"):
                             self.words.append("\n")
                 def handle_data(self, data):
-                    if self.active:
+                    if self.active and not self.verse_depth:
                         self.words.append(data)
                         if self.heading: self.heading_words.append(data)
                 def handle_endtag(self, tag):
+                    if self.verse_depth:
+                        self.verse_depth -= 1
+                        return
                     if not self.active: return
                     if tag == "p" and self.heading: self.heading = False
                     if tag == "div":
