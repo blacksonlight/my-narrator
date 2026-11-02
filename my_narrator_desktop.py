@@ -376,23 +376,18 @@ class App:
         canvas.configure(yscrollcommand=page_scroll.set)
         page_scroll.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
-        # Explicit navigation buttons remain visible even with macOS auto-hidden scrollbars.
-        scroll_controls = ttk.Frame(root)
-        scroll_controls.pack(side="bottom", fill="x", before=outer)
-        ttk.Button(scroll_controls, text="▲ Scroll up", command=lambda: canvas.yview_scroll(-5, "units")).pack(side="left", padx=8, pady=3)
-        ttk.Button(scroll_controls, text="▼ Scroll down", command=lambda: canvas.yview_scroll(5, "units")).pack(side="right", padx=8, pady=3)
         frame = ttk.Frame(canvas, padding=20)
         window_id = canvas.create_window((0, 0), window=frame, anchor="nw")
         frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>", lambda e: canvas.itemconfigure(window_id, width=e.width))
         def wheel(event):
-            # Let chapter tree and log text handle their own scrolling.
+            # macOS trackpad gestures: keep smooth proportional scrolling.
             widget = event.widget
             if widget is self.sections or widget is self.log_box:
                 return
             delta = getattr(event, "delta", 0)
             if delta:
-                canvas.yview_scroll(-int(delta / abs(delta)), "units")
+                canvas.yview_scroll(-int(delta), "units")
         root.bind_all("<MouseWheel>", wheel, add="+")
         root.bind_all("<Shift-MouseWheel>", wheel, add="+")
         root.bind_all("<Button-4>", lambda e: canvas.yview_scroll(-3, "units"), add="+")
