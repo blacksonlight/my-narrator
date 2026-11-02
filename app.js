@@ -90,7 +90,7 @@ function bibleBookFromHeading(label){
     if(new RegExp('^'+alias+'(?:\\s|$)','i').test(normalized))return book;
   }
   const names=bibleBooks.slice().sort((a,b)=>b.length-a.length);
-  return names.find(name=>new RegExp('^'+name.replace(/[.*+?^$\u007b\u007d()|[\]\\]/g,'\\function resolvePath(base,path)')+'(?:\\s|$)','i').test(normalized))||null;
+  return names.find(name=>normalized.toLowerCase()===name.toLowerCase()||normalized.toLowerCase().startsWith(name.toLowerCase()+' '))||null;
 }
 function annotateBibleSections(sections){
   // Use only explicit book headings, or numbered chapters following an
