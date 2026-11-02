@@ -92,7 +92,7 @@ def extract_epub(path):
                         if tag == "p" and "cn" in attrs.get("class", "").split():
                             self.heading = True
                         if tag in ("p", "div", "br", "li", "h1", "h2"):
-                            self.words.append("\\n")
+                            self.words.append("\n")
                 def handle_data(self, data):
                     if self.active:
                         self.words.append(data)
@@ -120,7 +120,7 @@ def extract_epub(path):
                 if len(content.strip()) >= 30:
                     heading = re.search(r"<(?:h1|h2|title)[^>]*>(.*?)</(?:h1|h2|title)>", raw, re.I | re.S)
                     title = re.sub(r"<[^>]+>", "", heading.group(1)).strip() if heading else ""
-                    label = re.sub(r"\\s+", " ", title)[:75] if title else f"Section {len(chapters)+1}"
+                    label = re.sub(r"\s+", " ", title)[:75] if title else f"Section {len(chapters)+1}"
                     chapters.append((label, content))
         return chapters
 
@@ -366,8 +366,27 @@ class App:
         self.player_proc = None
         self.player_paused = False
         self.preview_path = None
-        frame = ttk.Frame(root, padding=20)
-        frame.pack(fill="both", expand=True)
+        # Scroll the entire studio so playback and conversion controls remain reachable.
+        outer = ttk.Frame(root)
+        outer.pack(fill="both", expand=True)
+        canvas = tk.Canvas(outer, highlightthickness=0, borderwidth=0)
+        page_scroll = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=page_scroll.set)
+        page_scroll.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        frame = ttk.Frame(canvas, padding=20)
+        window_id = canvas.create_window((0, 0), window=frame, anchor="nw")
+        frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(window_id, width=e.width))
+        def wheel(event):
+            # Let chapter tree and log text handle their own scrolling.
+            widget = event.widget
+            if widget is self.sections or widget is self.log_box:
+                return
+            delta = getattr(event, "delta", 0)
+            if delta:
+                canvas.yview_scroll(-int(delta / abs(delta)), "units")
+        root.bind_all("<MouseWheel>", wheel, add="+")
         ttk.Label(frame, text="My Narrator", font=("Helvetica", 24, "bold")).pack(anchor="w")
         ttk.Label(frame, text="Generate locally. AirDrop or iCloud to iPhone.").pack(anchor="w", pady=(0, 15))
         ttk.Label(frame, text="PDF or DRM-free EPUB").pack(anchor="w")
