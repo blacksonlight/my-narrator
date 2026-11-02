@@ -111,14 +111,35 @@ def extract_pdf(path):
         import pymupdf
     except ImportError:
         raise RuntimeError("PyMuPDF is missing. Run: python3 -m pip install pymupdf")
-    doc = pymupdf.open(str(path))
-    chapters = []
-    # Page-based parts are a reliable fallback when PDF headings are not marked.
-    for i in range(0, len(doc), 10):
-        text = "\n\n".join(page.get_text(sort=True) for page in doc[i:i+10]).strip()
-        if text:
-            chapters.append((f"Pages {i+1}–{min(i+10, len(doc))}", text))
-    return chapters
+    with pymupdf.open(str(path)) as doc:
+        toc = [(level, title.strip(), page) for level, title, page in doc.get_toc()
+               if 1 <= page <= len(doc) and title.strip()]
+        # PDF bookmarks give genuine named chapter starts. Prefer the deepest
+        # available level, avoiding parent and child sections overlapping.
+        if toc:
+            deepest = max(level for level, _, _ in toc)
+            entries = [(title, page) for level, title, page in toc if level == deepest]
+            # Some PDFs have only a few bookmarks; use them only if meaningful.
+            starts = []
+            for title, page in entries:
+                if not starts or page > starts[-1][1]:
+                    starts.append((title, page))
+            if len(starts) >= 2:
+                chapters = []
+                if starts[0][1] > 1:
+                    text = "\\n\\n".join(doc[i].get_text(sort=True) for i in range(starts[0][1]-1)).strip()
+                    if text: chapters.append((f"Front Matter (pages 1–{starts[0][1]-1})", text))
+                for idx, (title, page) in enumerate(starts):
+                    end = starts[idx+1][1]-1 if idx+1 < len(starts) else len(doc)
+                    text = "\\n\\n".join(doc[i].get_text(sort=True) for i in range(page-1, end)).strip()
+                    if text: chapters.append((title, text))
+                if chapters: return chapters
+        # No usable bookmarks: explicit page ranges, not invented chapter names.
+        chapters = []
+        for i in range(0, len(doc), 10):
+            text = "\\n\\n".join(page.get_text(sort=True) for page in doc[i:i+10]).strip()
+            if text: chapters.append((f"Pages {i+1}–{min(i+10, len(doc))}", text))
+        return chapters
 
 def chunks(text, limit=480):
     text = re.sub(r"\s+", " ", text).strip()
