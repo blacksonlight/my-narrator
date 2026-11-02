@@ -12,9 +12,9 @@ function openBook(id){let b=books.find(x=>x.id===id);if(!b)return;stop();active=
 // Local audiobook export: no network transfer of book content.
 $('exportBook').onclick=()=>{
   if(!active){updateStatus('Open a book before exporting.');return;}
-  const safe=active.name.replace(/\\.[^.]+$/,'').replace(/[^a-z0-9_-]+/gi,'-').slice(0,90)||'book';
+  const safe=active.name.replace(/\.[^.]+$/,'').replace(/[^a-z0-9_-]+/gi,'-').slice(0,90)||'book';
   const voice=$('exportVoice').value;
-  const body='MY_NARRATOR_EXPORT\\n'+JSON.stringify({title:active.name,voice})+'\\n'+active.parts.join('\\n\\n');
+  const body='MY_NARRATOR_EXPORT\n'+JSON.stringify({title:active.name,voice})+'\n'+active.parts.join('\n\n');
   const url=URL.createObjectURL(new Blob([body],{type:'text/plain;charset=utf-8'}));
   const link=document.createElement('a');link.href=url;link.download=safe+'.txt';document.body.append(link);link.click();link.remove();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
