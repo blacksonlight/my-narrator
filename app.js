@@ -83,10 +83,53 @@ async function parseEPUB(file){
   }
   return result;
 }
+function bibleBookFromHeading(label){
+  const normalized=clean(label).replace(/[–—:]/g,' ').replace(/^(?:the\\s+)?book\\s+of\\s+/i,'').trim();
+  const aliases={'Psalm':'Psalms','Song of Solomon':'Song of Songs','Canticles':'Song of Songs'};
+  for(const [alias,book] of Object.entries(aliases)){
+    if(new RegExp('^'+alias+'(?:\\s|$)','i').test(normalized))return book;
+  }
+  const names=bibleBooks.slice().sort((a,b)=>b.length-a.length);
+  return names.find(name=>new RegExp('^'+name.replace(/[.*+?^$\u007b\u007d()|[\]\\]/g,'\\function resolvePath(base,path)')+'(?:\\s|$)','i').test(normalized))||null;
+}
+function annotateBibleSections(sections){
+  // Use only explicit book headings, or numbered chapters following an
+  // explicit book heading. Never infer a book merely from its sequence.
+  let current=null,chapterNumber=0;
+  for(const section of sections){
+    const label=clean(section.title),text=clean(section.text||'');
+    const firstLine=(section.text||'').split(/\\n/).map(clean).find(Boolean)||'';
+    const source=bibleBookFromHeading(label);
+    const direct=label.match(/^(?:Psalm\\s+\\d+|(?:[1-3]\\s+)?[A-Za-z]+(?:\\s+of\\s+[A-Za-z]+)?\\s+\\d+)\\b/i);
+    if(source){
+      current=source;
+      const number=label.match(/\\b(?:chapter\\s+)?(\\d+)\\b/i);
+      if(number){chapterNumber=Number(number[1]);section.bible={book:source,chapter:chapterNumber};}
+      else {chapterNumber=0;section.bible={book:source,chapter:null};}
+      continue;
+    }
+    const explicit=label.match(/^(?:chapter|chap\\.?|psalm)\\s*(\\d+)\\b/i);
+    if(explicit&&current){
+      chapterNumber=Number(explicit[1]);
+      section.bible={book:current,chapter:chapterNumber};
+      continue;
+    }
+    // Chapter number only is meaningful when the EPUB has established context.
+    if(/^\\d{1,3}$/.test(label)&&current){
+      chapterNumber=Number(label);section.bible={book:current,chapter:chapterNumber};continue;
+    }
+    // Editorial material does not inherit the preceding Bible book.
+    if(!direct && /^(?:introduction|preface|foreword|copyright|contents|leadership|article|notes|study|index|appendix|about|acknowledg)/i.test(label)){
+      current=null;
+    }
+  }
+  return sections;
+}
 function resolvePath(base,path){let segments=(base+path).split('/'),out=[];for(let p of segments){if(p==='..')out.pop();else if(p&&p!=='.')out.push(p)}return out.join('/')}
-$('file').onchange=async e=>{let file=e.target.files[0];if(!file||!db)return;try{updateStatus('Importing '+file.name+'…');let sections=file.name.toLowerCase().endsWith('.pdf')?await parsePDF(file):await parseEPUB(file),chunks=sections.flatMap(x=>splitText(x.text));if(!chunks.length)throw Error('No readable text found. Scanned PDFs need OCR.');let b={id:crypto.randomUUID(),name:file.name,parts:chunks,sections:sections.map(x=>({title:x.title,parts:splitText(x.text)})),position:0};await save(b);await refresh();openBook(b.id);updateStatus('Imported '+chunks.length+' narration segments.')}catch(err){updateStatus('Import failed: '+err.message)}e.target.value=''};
+$('file').onchange=async e=>{let file=e.target.files[0];if(!file||!db)return;try{updateStatus('Importing '+file.name+'…');let sections=file.name.toLowerCase().endsWith('.pdf')?await parsePDF(file):await parseEPUB(file),chunks=sections.flatMap(x=>splitText(x.text));if(!chunks.length)throw Error('No readable text found. Scanned PDFs need OCR.');let b={id:crypto.randomUUID(),name:file.name,parts:chunks,sections:annotateBibleSections(sections).map(x=>({title:x.title,parts:splitText(x.text),bible:x.bible||null})),position:0};await save(b);await refresh();openBook(b.id);updateStatus('Imported '+chunks.length+' narration segments.')}catch(err){updateStatus('Import failed: '+err.message)}e.target.value=''};
 const bibleBooks="Genesis|Exodus|Leviticus|Numbers|Deuteronomy|Joshua|Judges|Ruth|1 Samuel|2 Samuel|1 Kings|2 Kings|1 Chronicles|2 Chronicles|Ezra|Nehemiah|Esther|Job|Psalms|Proverbs|Ecclesiastes|Song of Songs|Isaiah|Jeremiah|Lamentations|Ezekiel|Daniel|Hosea|Joel|Amos|Obadiah|Jonah|Micah|Nahum|Habakkuk|Zephaniah|Haggai|Zechariah|Malachi|Matthew|Mark|Luke|John|Acts|Romans|1 Corinthians|2 Corinthians|Galatians|Ephesians|Philippians|Colossians|1 Thessalonians|2 Thessalonians|1 Timothy|2 Timothy|Titus|Philemon|Hebrews|James|1 Peter|2 Peter|1 John|2 John|3 John|Jude|Revelation".split('|');
-function bibleLocation(title){
+function bibleLocation(title,metadata){
+  if(metadata?.book&&bibleBooks.includes(metadata.book))return {testament:bibleBooks.indexOf(metadata.book)<39?'Old Testament':'New Testament',book:metadata.book,chapter:metadata.chapter||null};
   const label=(title||'').trim();
   const ps=label.match(/^Psalm\\s+(\\d+)\\b/i);
   if(ps)return {testament:'Old Testament',book:'Psalms',chapter:ps[1]};
@@ -98,7 +141,7 @@ function bibleLocation(title){
   }
   return {testament:'Additional Material',book:'Other Sections',chapter:null};
 }
-function chapterGroup(title){const p=bibleLocation(title);return p.testament+' / '+p.book;}
+function chapterGroup(title,metadata){const p=bibleLocation(title,metadata);return p.testament+' / '+p.book;}
 function populateSections(){
   const sections=active?.sections||[];
   for(const [testamentId,groupId,sectionId] of [
@@ -106,7 +149,7 @@ function populateSections(){
     ['exportTestament','exportGroup','exportSection']
   ]){
     const testament=$(testamentId),group=$(groupId),select=$(sectionId);
-    const locations=sections.map(x=>bibleLocation(x.title));
+    const locations=sections.map(x=>bibleLocation(x.title,x.bible));
     testament.replaceChildren();
     for(const value of ['all','Old Testament','New Testament','Additional Material']){
       if(value!=='all'&&!locations.some(x=>x.testament===value))continue;
@@ -120,7 +163,7 @@ function populateSections(){
       for(let i=0;i<sections.length;i++){
         const p=locations[i];
         if(testament.value!=='all'&&p.testament!==testament.value)continue;
-        if(selected!=='all'&&chapterGroup(sections[i].title)!==selected)continue;
+        if(selected!=='all'&&chapterGroup(sections[i].title,sections[i].bible)!==selected)continue;
         const o=document.createElement('option');o.value=String(i);
         o.textContent=p.chapter?'Chapter '+p.chapter:sections[i].title;
         select.append(o);
@@ -141,7 +184,7 @@ function selectedSections(testamentId,groupId,sectionId){
   if(!active)return [];
   const selected=$(sectionId).value,group=$(groupId).value,testament=$(testamentId).value;
   if(selected!=='all')return [active.sections[Number(selected)]];
-  return active.sections.filter(x=>(testament==='all'||bibleLocation(x.title).testament===testament)&&(group==='all'||chapterGroup(x.title)===group));
+  return active.sections.filter(x=>(testament==='all'||bibleLocation(x.title,x.bible).testament===testament)&&(group==='all'||chapterGroup(x.title,x.bible)===group));
 }
 function chooseReadingSection(){
   if(!active)return;
