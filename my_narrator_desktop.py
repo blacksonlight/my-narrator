@@ -412,7 +412,8 @@ class App:
         try:
             self.chapters = load_chapters(book)
             self.loaded_book = book.resolve()
-            self.sections.delete(0, "end")
+            self.sections.delete(*self.sections.get_children())
+            self.tree_items = {}
             groups = {}
             for i, (label, content) in enumerate(self.chapters):
                 testament, book_name = bible_location(label)
