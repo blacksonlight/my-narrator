@@ -653,7 +653,7 @@ class App:
                     self.messages.put(("reading", "Chapter finished"))
             except Exception as exc:
                 if not cancelled.is_set():
-                    self.messages.put(("player_error", str(exc))
+                    self.messages.put(("player_error", str(exc)))
         threading.Thread(target=worker, daemon=True).start()
 
     def play_chapter(self):
