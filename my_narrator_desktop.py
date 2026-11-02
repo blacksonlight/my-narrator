@@ -342,7 +342,7 @@ BIBLE_BOOKS = """Genesis|Exodus|Leviticus|Numbers|Deuteronomy|Joshua|Judges|Ruth
 def bible_location(label):
     """Classify explicitly named Bible chapters, without guessing other material."""
     label = " ".join(label.split())
-    if re.match(r"^Psalm\\s+\\d+\\b", label, re.I):
+    if re.match(r"^Psalm\s+\d+\b", label, re.I):
         return ("Old Testament", "Psalms")
     for index, name in enumerate(BIBLE_BOOKS):
         if re.match(r"^" + re.escape(name) + r"\s+(\d+)(?:\b|$)", label, re.I):
