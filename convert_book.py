@@ -15,7 +15,7 @@ def run(args):
     subprocess.run(args, check=True)
 
 def split_passage(text, limit=550):
-    sentences = re.split(r"(?<=[.!?])\\s+", re.sub(r"\\s+", " ", text).strip())
+    sentences = re.split(r"(?<=[.!?])\s+", re.sub(r"\s+", " ", text).strip())
     pieces, buf = [], ""
     for sentence in sentences:
         while len(sentence) > limit:
